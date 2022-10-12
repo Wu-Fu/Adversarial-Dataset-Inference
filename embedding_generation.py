@@ -160,7 +160,7 @@ def feature_extractor(args):
     student.eval()
     print(test(student, test_loader, args))
 
-    file_dir = args.file_dir + args.dataset + '/' + args.model_id + '/'
+    file_dir = args.file_dir
     if not os.path.exists(file_dir):
         os.makedirs(file_dir)
 
