@@ -4,7 +4,7 @@ import ipdb
 import torch.multiprocessing as _mp
 import torch.nn.functional as F
 import sys
-sys.path.append("../model_src/")
+sys.path.append("./model_src")
 from preactresnet import *
 from wideresnet import *
 from cnn import *

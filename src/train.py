@@ -7,7 +7,7 @@ import torch.optim as optim
 from funcs import *
 from models import *
 
-sys.path.append('../model_src')
+sys.path.append('./model_src')
 from preactresnet import PreActResNet18
 from resnet import resnet34
 from resnet_8x import ResNet_8x
@@ -114,9 +114,30 @@ def epoch_test(args, loader, model, stop = False):
 
 epoch_adversarial = epoch
 
+def get_mix_dataloader(dataset, batch_size):
+    import random
+    tr_normalize = transforms.Normalize((0.4914, 0.4822, 0.4465),
+                                        (0.2471, 0.2435, 0.2616))
+    transform_train = transforms.Compose([transforms.RandomCrop(32, padding=4),
+                                          transforms.RandomHorizontalFlip(),
+                                          transforms.ToTensor(), tr_normalize,
+                                          transforms.Lambda(lambda x: x.float())])
+    transform_test = transforms.Compose([transforms.ToTensor(), tr_normalize, transforms.Lambda(lambda x: x.float())])
+
+    bias_dataset = torchvision.datasets.ImageFolder(root='../../CIFAR-10-C/brightness_part',
+                                                       transform=transform_train)
+    cifar_train = torchvision.datasets.CIFAR10("../../data", train=True, download=True, transform=transform_train)
+    cifar_test = torchvision.datasets.CIFAR10("../../data", train=False, download=True, transform=transform_test)
+    train_dataset = torch.utils.data.ConcatDataset([cifar_train, bias_dataset])
+    train_loader = DataLoader(train_dataset, batch_size = batch_size, shuffle=False)
+    test_loader = DataLoader(cifar_test, batch_size = batch_size, shuffle=False)
+    print("train with mix dataset")
+    return train_loader, test_loader
+
 
 def trainer(args):
     train_loader, test_loader = get_dataloaders(args.dataset, args.batch_size, pseudo_labels = args.pseudo_labels, concat = args.concat, concat_factor = args.concat_factor)
+    #train_loader, test_loader = get_mix_dataloader(args.dataset, args.batch_size)
     if args.mode == "independent":
         train_loader, test_loader = test_loader, train_loader
 
@@ -130,9 +151,12 @@ def trainer(args):
         opt = optim.SGD(student.parameters(), lr=0.1, momentum=0.9, weight_decay=5e-4) 
     else:
          optim.Adam(student.parameters(), lr=0.1)
-    
+
     lr_schedule = lr_scheduler(args)
     t_start = 0
+    if not teacher is None:
+        teacher_acc, teacher_loss = epoch_test(args, test_loader, teacher)
+        print(teacher_acc, teacher_loss)
 
     if args.resume:
         location = f"{args.model_dir}/iter_{str(args.resume_iter)}.pt"
@@ -171,6 +195,7 @@ def get_student_teacher(args):
         teacher = Net_Arch(n_classes = args.num_classes, depth=deep, widen_factor=10, normalize = args.normalize, dropRate = 0.3)
         teacher = nn.DataParallel(teacher).to(args.device) if args.dataset != "SVHN" else teacher.to(args.device)
         teacher_dir = "model_teacher_normalized" if args.normalize else "model_teacher_unnormalized"
+        # 注意有无standard
         path = f"../models/{args.dataset}/{teacher_dir}/final"
         teacher = load(teacher,path)
         teacher.eval()
@@ -190,7 +215,7 @@ def get_student_teacher(args):
         # python train.py --batch_size 1000 --mode fine-tune --lr_max 0.01 --normalize 1 --model_id fine-tune_normalized --pseudo_labels 1 --lr_mode 2 --epochs 5 --dataset CIFAR10
         student =  Net_Arch(n_classes = args.num_classes, depth=deep_full, widen_factor=10, normalize = args.normalize)
         student = nn.DataParallel(student).to(args.device) if args.dataset != "SVHN" else student.to(args.device)
-        teacher_dir = "model_teacher_normalized" if args.normalize else "model_teacher_unnormalized"
+        teacher_dir = "model_standard_ teacher_normalized" if args.normalize else "model_teacher_unnormalized"
         path = f"../models/{args.dataset}/{teacher_dir}/final"
         student = load(student,path)
         student.train()
@@ -243,7 +268,7 @@ if __name__ == "__main__":
     if args.concat:
         model_dir += f"concat_{args.concat_factor}"
     args.model_dir = model_dir
-    if(not os.path.exists(model_dir)):
+    if not os.path.exists(model_dir):
         os.makedirs(model_dir)
        
     with open(f"{model_dir}/model_info.txt", "w") as f:
